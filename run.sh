@@ -23,15 +23,13 @@ ROOT="$(cd "$(dirname "$0")" && pwd)"
 BIN="$ROOT/eth-scan"
 SRC="$ROOT/eth-wallet-scanner"
 
-if [ ! -f "$BIN" ]; then
-    echo "[*] Building binary..."
-    if ! command -v go &>/dev/null; then
-        echo "ERROR: Go not found."
-        exit 1
-    fi
-    cd "$SRC" && GOFLAGS="-mod=mod" go build -ldflags="-s -w" -o "$BIN" . || exit 1
-    echo "[✓] Build complete."
+echo "[*] Building..."
+if ! command -v go &>/dev/null; then
+    echo "ERROR: Go not found."
+    exit 1
 fi
+cd "$SRC" && GOFLAGS="-mod=mod" go build -ldflags="-s -w" -o "$BIN" . || exit 1
+echo "[*] Build OK"
 
 cd "$ROOT"
 
