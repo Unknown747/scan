@@ -27,26 +27,9 @@ type Result struct {
 type Config struct {
 	RPCURL     string
 	Workers    int
-	BatchSize  int
 	RateLimit  time.Duration
 	Timeout    time.Duration
 	MaxRetries int
-	ShowAll    bool
-	SaveResults bool
-}
-
-// DefaultConfig konfigurasi default yang sudah optimal
-func DefaultConfig() Config {
-	return Config{
-		RPCURL:      "https://eth.llamarpc.com",
-		Workers:     5,
-		BatchSize:   20,
-		RateLimit:   500 * time.Millisecond,
-		Timeout:     15 * time.Second,
-		MaxRetries:  3,
-		ShowAll:     true,
-		SaveResults: true,
-	}
 }
 
 // rpcRequest format JSON-RPC 2.0
@@ -118,7 +101,7 @@ func getBalance(ctx context.Context, client *http.Client, rpcURL string, address
 	return balance, nil
 }
 
-// getBalanceWithRetry mencoba getBalance sampai MaxRetries kali dengan backoff
+// getBalanceWithRetry mencoba getBalance sampai maxRetries kali dengan exponential backoff
 func getBalanceWithRetry(ctx context.Context, client *http.Client, rpcURL string, address common.Address, maxRetries int) (*big.Int, error) {
 	var lastErr error
 	backoff := 500 * time.Millisecond
@@ -130,7 +113,7 @@ func getBalanceWithRetry(ctx context.Context, client *http.Client, rpcURL string
 				return nil, ctx.Err()
 			case <-time.After(backoff):
 			}
-			backoff *= 2 // exponential backoff
+			backoff *= 2
 		}
 
 		bal, err := getBalance(ctx, client, rpcURL, address)
@@ -161,7 +144,6 @@ func NewScanner(cfg Config) *Scanner {
 		MaxIdleConns:        cfg.Workers * 2,
 		MaxIdleConnsPerHost: cfg.Workers * 2,
 		IdleConnTimeout:     90 * time.Second,
-		DisableKeepAlives:   false,
 	}
 
 	return &Scanner{
@@ -179,21 +161,16 @@ func (s *Scanner) Stats() (checked, withFunds, errors int64) {
 }
 
 // Run menjalankan scan dari startIndex sampai endIndex (inklusif)
-func (s *Scanner) Run(
-	ctx context.Context,
-	startIndex, endIndex *big.Int,
-	resultCh chan<- Result,
-) {
+func (s *Scanner) Run(ctx context.Context, startIndex, endIndex *big.Int, resultCh chan<- Result) {
 	indexCh := make(chan *big.Int, s.config.Workers*2)
 
 	var wg sync.WaitGroup
-
 	for i := 0; i < s.config.Workers; i++ {
 		wg.Add(1)
-		go func(workerID int) {
+		go func() {
 			defer wg.Done()
 			s.worker(ctx, indexCh, resultCh)
-		}(i)
+		}()
 	}
 
 	go func() {
@@ -214,11 +191,7 @@ func (s *Scanner) Run(
 }
 
 // worker memproses index dari channel
-func (s *Scanner) worker(
-	ctx context.Context,
-	indexCh <-chan *big.Int,
-	resultCh chan<- Result,
-) {
+func (s *Scanner) worker(ctx context.Context, indexCh <-chan *big.Int, resultCh chan<- Result) {
 	rateTicker := time.NewTicker(s.config.RateLimit)
 	defer rateTicker.Stop()
 
@@ -231,7 +204,6 @@ func (s *Scanner) worker(
 				return
 			}
 
-			// Rate limiting per worker
 			select {
 			case <-rateTicker.C:
 			case <-ctx.Done():
@@ -241,7 +213,7 @@ func (s *Scanner) worker(
 			w, err := wallet.FromIndex(idx)
 			if err != nil {
 				s.errors.Add(1)
-				resultCh <- Result{Wallet: nil, Error: fmt.Errorf("index %s: %w", idx.String(), err)}
+				resultCh <- Result{Error: fmt.Errorf("index %s: %w", idx.String(), err)}
 				continue
 			}
 
@@ -250,7 +222,7 @@ func (s *Scanner) worker(
 
 			if err != nil {
 				s.errors.Add(1)
-				resultCh <- Result{Wallet: w, Balance: nil, Error: err}
+				resultCh <- Result{Wallet: w, Error: err}
 				continue
 			}
 
@@ -258,7 +230,7 @@ func (s *Scanner) worker(
 				s.withFunds.Add(1)
 			}
 
-			resultCh <- Result{Wallet: w, Balance: balance, Error: nil}
+			resultCh <- Result{Wallet: w, Balance: balance}
 		}
 	}
 }
