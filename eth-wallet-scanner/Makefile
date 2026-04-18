@@ -1,20 +1,14 @@
 GO := /nix/store/a90l6nxkqdlqxzgz5j958rz5gwygbamc-go-1.21.13/bin/go
-BINARY := eth-scanner
+BINARY := eth-scan
 
-.PHONY: build run-gen run-scan clean
+.PHONY: build run clean
 
 build:
-	$(GO) build -o $(BINARY) .
+	$(GO) build -ldflags="-s -w" -o $(BINARY) .
 	@echo "Binary: ./$(BINARY)"
 
-run-gen:
-	$(GO) run . -gen -start 1 -end 20
-
-run-scan:
-	$(GO) run . -start 1 -end 100 -workers 10 -rate 200
+run:
+	bash run.sh
 
 clean:
 	rm -f $(BINARY) found_wallets.txt
-
-help:
-	$(GO) run . -help

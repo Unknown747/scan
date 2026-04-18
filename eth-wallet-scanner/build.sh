@@ -1,29 +1,25 @@
 #!/usr/bin/env bash
 set -e
 
-# Cari Go binary
 if command -v go &>/dev/null; then
     GO=go
-elif [ -f /nix/store/a90l6nxkqdlqxzgz5j958rz5gwygbamc-go-1.21.13/bin/go ]; then
-    GO=/nix/store/a90l6nxkqdlqxzgz5j958rz5gwygbamc-go-1.21.13/bin/go
 else
-    # Cari di nix store
-    GO=$(ls /nix/store/*/bin/go 2>/dev/null | head -1)
+    GO=$(ls /nix/store/*/bin/go 2>/dev/null | grep "go-1" | head -1)
     if [ -z "$GO" ]; then
-        echo "ERROR: Go tidak ditemukan. Install dulu: https://go.dev/dl/"
+        echo "ERROR: Go tidak ditemukan."
         exit 1
     fi
 fi
 
-echo "Menggunakan Go: $($GO version)"
+echo "Menggunakan: $($GO version)"
 echo "Building..."
 
-$GO build -ldflags="-s -w" -o eth-scanner .
+$GO build -ldflags="-s -w" -o eth-scan .
 
 echo ""
-echo "✓ Build berhasil! Binary: ./eth-scanner"
+echo "✓ Build selesai! Binary: ./eth-scan"
 echo ""
-echo "Contoh penggunaan:"
-echo "  ./eth-scanner -gen -start 1 -end 10          # generate 10 wallet"
-echo "  ./eth-scanner -start 1 -end 1000 -workers 20 # scan saldo 1000 wallet"
-echo "  ./eth-scanner -help                           # lihat semua opsi"
+echo "Contoh:"
+echo "  ./eth-scan -gen -start 1 -end 10   # generate 10 wallet"
+echo "  ./eth-scan -start 1 -end 1000      # scan saldo"
+echo "  bash run.sh                         # jalankan otomatis (pakai konfigurasi run.sh)"

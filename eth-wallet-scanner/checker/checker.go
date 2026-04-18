@@ -25,12 +25,13 @@ type Result struct {
 
 // Config konfigurasi checker
 type Config struct {
-	RPCURL      string
-	Workers     int
-	BatchSize   int
-	RateLimit   time.Duration // jeda antar request per worker
-	Timeout     time.Duration
-	ShowAll     bool // jika false, hanya tampilkan yang ada saldo
+	RPCURL     string
+	Workers    int
+	BatchSize  int
+	RateLimit  time.Duration
+	Timeout    time.Duration
+	MaxRetries int
+	ShowAll    bool
 	SaveResults bool
 }
 
@@ -38,11 +39,12 @@ type Config struct {
 func DefaultConfig() Config {
 	return Config{
 		RPCURL:      "https://eth.llamarpc.com",
-		Workers:     10,
-		BatchSize:   50,
-		RateLimit:   100 * time.Millisecond,
-		Timeout:     10 * time.Second,
-		ShowAll:     false,
+		Workers:     5,
+		BatchSize:   20,
+		RateLimit:   500 * time.Millisecond,
+		Timeout:     15 * time.Second,
+		MaxRetries:  3,
+		ShowAll:     true,
 		SaveResults: true,
 	}
 }
@@ -57,10 +59,10 @@ type rpcRequest struct {
 
 // rpcResponse format respons JSON-RPC
 type rpcResponse struct {
-	JSONRPC string          `json:"jsonrpc"`
-	ID      int             `json:"id"`
-	Result  string          `json:"result"`
-	Error   *rpcError       `json:"error"`
+	JSONRPC string    `json:"jsonrpc"`
+	ID      int       `json:"id"`
+	Result  string    `json:"result"`
+	Error   *rpcError `json:"error"`
 }
 
 type rpcError struct {
@@ -100,10 +102,9 @@ func getBalance(ctx context.Context, client *http.Client, rpcURL string, address
 	}
 
 	if rpcResp.Error != nil {
-		return nil, fmt.Errorf("RPC error %d: %s", rpcResp.Error.Code, rpcResp.Error.Message)
+		return nil, fmt.Errorf("RPC %d: %s", rpcResp.Error.Code, rpcResp.Error.Message)
 	}
 
-	// Parse hex balance (dalam Wei)
 	balHex := rpcResp.Result
 	if len(balHex) >= 2 && balHex[:2] == "0x" {
 		balHex = balHex[2:]
@@ -117,6 +118,30 @@ func getBalance(ctx context.Context, client *http.Client, rpcURL string, address
 	return balance, nil
 }
 
+// getBalanceWithRetry mencoba getBalance sampai MaxRetries kali dengan backoff
+func getBalanceWithRetry(ctx context.Context, client *http.Client, rpcURL string, address common.Address, maxRetries int) (*big.Int, error) {
+	var lastErr error
+	backoff := 500 * time.Millisecond
+
+	for attempt := 0; attempt <= maxRetries; attempt++ {
+		if attempt > 0 {
+			select {
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			case <-time.After(backoff):
+			}
+			backoff *= 2 // exponential backoff
+		}
+
+		bal, err := getBalance(ctx, client, rpcURL, address)
+		if err == nil {
+			return bal, nil
+		}
+		lastErr = err
+	}
+	return nil, fmt.Errorf("gagal setelah %d retry: %w", maxRetries, lastErr)
+}
+
 // Scanner menangani proses scan wallet secara paralel
 type Scanner struct {
 	config    Config
@@ -128,6 +153,10 @@ type Scanner struct {
 
 // NewScanner membuat Scanner baru
 func NewScanner(cfg Config) *Scanner {
+	if cfg.MaxRetries == 0 {
+		cfg.MaxRetries = 3
+	}
+
 	transport := &http.Transport{
 		MaxIdleConns:        cfg.Workers * 2,
 		MaxIdleConnsPerHost: cfg.Workers * 2,
@@ -150,27 +179,23 @@ func (s *Scanner) Stats() (checked, withFunds, errors int64) {
 }
 
 // Run menjalankan scan dari startIndex sampai endIndex (inklusif)
-// Menggunakan worker pool untuk paralelisme
 func (s *Scanner) Run(
 	ctx context.Context,
 	startIndex, endIndex *big.Int,
 	resultCh chan<- Result,
 ) {
-	// Channel untuk mendistribusikan index ke workers
 	indexCh := make(chan *big.Int, s.config.Workers*2)
 
 	var wg sync.WaitGroup
 
-	// Spawn workers
 	for i := 0; i < s.config.Workers; i++ {
 		wg.Add(1)
 		go func(workerID int) {
 			defer wg.Done()
-			s.worker(ctx, workerID, indexCh, resultCh)
+			s.worker(ctx, indexCh, resultCh)
 		}(i)
 	}
 
-	// Produce index ke channel
 	go func() {
 		current := new(big.Int).Set(startIndex)
 		for current.Cmp(endIndex) <= 0 {
@@ -188,10 +213,9 @@ func (s *Scanner) Run(
 	wg.Wait()
 }
 
-// worker memproses index dari channel dan mengirim hasil ke resultCh
+// worker memproses index dari channel
 func (s *Scanner) worker(
 	ctx context.Context,
-	id int,
 	indexCh <-chan *big.Int,
 	resultCh chan<- Result,
 ) {
@@ -221,7 +245,7 @@ func (s *Scanner) worker(
 				continue
 			}
 
-			balance, err := getBalance(ctx, s.client, s.config.RPCURL, w.Address)
+			balance, err := getBalanceWithRetry(ctx, s.client, s.config.RPCURL, w.Address, s.config.MaxRetries)
 			s.checked.Add(1)
 
 			if err != nil {
