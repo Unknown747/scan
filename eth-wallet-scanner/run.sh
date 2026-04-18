@@ -22,12 +22,11 @@ BIN="$DIR/eth-scan"
 
 if [ ! -f "$BIN" ]; then
     echo "[*] Binary belum ada, building..."
-    GO=$(find /nix/store -maxdepth 3 -name "go" -type f 2>/dev/null | grep "go-1" | head -1)
-    if [ -z "$GO" ]; then
+    if ! command -v go &>/dev/null; then
         echo "ERROR: Go tidak ditemukan."
         exit 1
     fi
-    cd "$DIR" && "$GO" build -ldflags="-s -w" -o eth-scan .
+    cd "$DIR" && go build -ldflags="-s -w" -o eth-scan .
     echo "[✓] Build selesai."
 fi
 
