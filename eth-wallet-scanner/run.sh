@@ -4,13 +4,14 @@
 #   Edit nilai di bawah sesuai kebutuhan
 # =============================================
 
-START=1                          # Index awal
+START=1                          # Index awal (diabaikan jika last_key.txt ada)
 END=99999999                     # Index akhir
 WORKERS=5                        # Goroutine paralel
 BATCH=20                         # Wallet per batch RPC (1 request = 20 wallet)
 RATE=300                         # Jeda antar batch per worker (ms)
 RPC="https://eth.llamarpc.com"   # RPC endpoint (Alchemy/Infura lebih cepat)
 OUTPUT="found_wallets.txt"       # File simpan hasil yang ada saldo
+LAST="last_key.txt"              # File simpan & resume index terakhir
 TIMEOUT=15                       # HTTP timeout (detik)
 
 # =============================================
@@ -21,7 +22,7 @@ BIN="$DIR/eth-scan"
 
 if [ ! -f "$BIN" ]; then
     echo "[*] Binary belum ada, building..."
-    GO=$(ls /nix/store/*/bin/go 2>/dev/null | grep "go-1" | head -1)
+    GO=$(find /nix/store -maxdepth 3 -name "go" -type f 2>/dev/null | grep "go-1" | head -1)
     if [ -z "$GO" ]; then
         echo "ERROR: Go tidak ditemukan."
         exit 1
@@ -38,4 +39,5 @@ exec "$BIN" \
     -rate "$RATE" \
     -rpc "$RPC" \
     -output "$OUTPUT" \
+    -last "$LAST" \
     -timeout "$TIMEOUT"
