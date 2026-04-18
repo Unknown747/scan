@@ -30,8 +30,9 @@ func main() {
 		startHex   = flag.String("start", "1", "Index awal")
 		endHex     = flag.String("end", "1000", "Index akhir")
 		workers    = flag.Int("workers", runtime.NumCPU()*2, "Jumlah goroutine paralel")
+		batchSize  = flag.Int("batch", 20, "Wallet per satu batch RPC request")
 		rpcURL     = flag.String("rpc", "https://eth.llamarpc.com", "Ethereum RPC endpoint")
-		rateMs     = flag.Int("rate", 300, "Jeda per worker (milidetik)")
+		rateMs     = flag.Int("rate", 300, "Jeda antar batch per worker (milidetik)")
 		timeoutS   = flag.Int("timeout", 15, "HTTP timeout (detik)")
 		outputFile = flag.String("output", "found_wallets.txt", "File simpan wallet bersaldo")
 		genOnly    = flag.Bool("gen", false, "Generate address saja tanpa cek saldo")
@@ -51,12 +52,13 @@ func main() {
 	total := new(big.Int).Sub(endIndex, startIndex)
 	total.Add(total, big.NewInt(1))
 
-	fmt.Printf("  Start   : %s\n", startIndex.String())
-	fmt.Printf("  End     : %s\n", endIndex.String())
-	fmt.Printf("  Total   : %s wallet\n", total.String())
-	fmt.Printf("  Workers : %d goroutines\n", *workers)
+	fmt.Printf("  Start     : %s\n", startIndex.String())
+	fmt.Printf("  End       : %s\n", endIndex.String())
+	fmt.Printf("  Total     : %s wallet\n", total.String())
+	fmt.Printf("  Workers   : %d goroutines\n", *workers)
 	if !*genOnly {
-		fmt.Printf("  RPC     : %s\n", *rpcURL)
+		fmt.Printf("  Batch RPC : %d wallet/request\n", *batchSize)
+		fmt.Printf("  RPC       : %s\n", *rpcURL)
 	}
 	fmt.Println()
 
@@ -65,7 +67,7 @@ func main() {
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
 	go func() {
 		<-sigCh
-		fmt.Println("\n[!] Dihentikan.")
+		fmt.Println("\n[!] Dihentikan. Menyimpan data...")
 		cancel()
 	}()
 
@@ -74,10 +76,10 @@ func main() {
 		return
 	}
 
-	runScanMode(ctx, cancel, startIndex, endIndex, *rpcURL, *workers, *rateMs, *timeoutS, *outputFile)
+	runScanMode(ctx, cancel, startIndex, endIndex, *rpcURL, *workers, *batchSize, *rateMs, *timeoutS, *outputFile)
 }
 
-// parseIndex parsing index dari string hex atau desimal
+// parseIndex parsing index dari string hex (0x...) atau desimal
 func parseIndex(s, name string) *big.Int {
 	n, ok := new(big.Int).SetString(s, 0)
 	if !ok || n.Sign() <= 0 {
@@ -90,17 +92,19 @@ func parseIndex(s, name string) *big.Int {
 	return n
 }
 
-// runGenerateOnly generate address tanpa cek saldo
+// runGenerateOnly generate + cetak address tanpa cek saldo
+// Menggunakan big.NewInt(1) sekali (reuse) untuk increment
 func runGenerateOnly(ctx context.Context, startIndex, endIndex *big.Int) {
 	fmt.Println("─────────────────────────────────────────────────────────────────────────────────────────")
 
+	one := big.NewInt(1)              // reuse, tidak alokasi baru tiap loop
 	current := new(big.Int).Set(startIndex)
 	var count int64 = 1
 
 	for current.Cmp(endIndex) <= 0 {
 		select {
 		case <-ctx.Done():
-			return
+			goto done
 		default:
 		}
 
@@ -111,26 +115,28 @@ func runGenerateOnly(ctx context.Context, startIndex, endIndex *big.Int) {
 			fmt.Printf("Count : %-10d  ERROR: %v\n", count, err)
 		}
 
-		current.Add(current, big.NewInt(1))
+		current.Add(current, one)
 		count++
 	}
 
+done:
 	fmt.Println("─────────────────────────────────────────────────────────────────────────────────────────")
 	fmt.Printf("\n[✓] Selesai. Total: %d wallet\n", count-1)
 }
 
-// runScanMode generate + cek saldo secara paralel
+// runScanMode scan saldo secara paralel dengan batch RPC
 func runScanMode(
 	ctx context.Context,
 	cancel context.CancelFunc,
 	startIndex, endIndex *big.Int,
 	rpcURL string,
-	workers, rateMs, timeoutS int,
+	workers, batchSize, rateMs, timeoutS int,
 	outputFile string,
 ) {
 	cfg := checker.Config{
 		RPCURL:     rpcURL,
 		Workers:    workers,
+		BatchSize:  batchSize,
 		RateLimit:  time.Duration(rateMs) * time.Millisecond,
 		Timeout:    time.Duration(timeoutS) * time.Second,
 		MaxRetries: 3,
@@ -138,6 +144,7 @@ func runScanMode(
 
 	scanner := checker.NewScanner(cfg)
 
+	// File output dengan buffered writer 64KB untuk minimalkan syscall write
 	var outFile *os.File
 	var writer *bufio.Writer
 	var fileMu sync.Mutex
@@ -147,7 +154,7 @@ func runScanMode(
 	} else {
 		outFile = f
 		defer outFile.Close()
-		writer = bufio.NewWriterSize(outFile, 65536)
+		writer = bufio.NewWriterSize(outFile, 65536) // 64KB buffer
 		defer writer.Flush()
 		if stat, _ := outFile.Stat(); stat.Size() == 0 {
 			fmt.Fprintf(writer, "# ETH Wallet Scanner — Found Wallets\n")
@@ -156,12 +163,14 @@ func runScanMode(
 		}
 	}
 
-	resultCh := make(chan checker.Result, workers*4)
+	// Buffered result channel: workers*batchSize*2 agar producer tidak blocking
+	resultCh := make(chan checker.Result, workers*batchSize*2)
 
 	fmt.Println("─────────────────────────────────────────────────────────────────────────────────────────")
 	startTime := time.Now()
 	var displayCount atomic.Int64
 
+	// Goroutine tunggal untuk print + file write (menghindari print race)
 	var resultWg sync.WaitGroup
 	resultWg.Add(1)
 	go func() {
@@ -172,6 +181,7 @@ func runScanMode(
 		}
 	}()
 
+	// Jalankan scan (blocking sampai selesai atau ctx cancel)
 	scanner.Run(ctx, startIndex, endIndex, resultCh)
 	close(resultCh)
 	resultWg.Wait()
@@ -191,7 +201,7 @@ func runScanMode(
 	}
 }
 
-// weiPerEth konversi Wei ke ETH
+// weiPerEth untuk konversi Wei → ETH (dihitung sekali, package-level)
 var weiPerEth = new(big.Float).SetInt(new(big.Int).Exp(big.NewInt(10), big.NewInt(18), nil))
 
 func weiToEth(wei *big.Int) string {
@@ -224,6 +234,7 @@ func printResult(count int64, res checker.Result, writer *bufio.Writer, mu *sync
 		fmt.Printf("Count : %-10d  Addrs : %s  Bal : 0\n", count, addr)
 	}
 
+	// Tulis ke file hanya jika ada saldo (buffered 64KB, flush hanya saat found)
 	if hasBalance && writer != nil {
 		mu.Lock()
 		fmt.Fprintf(writer, "%d | %s | %s | %s ETH\n",
