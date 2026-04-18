@@ -1,47 +1,59 @@
-# Workspace
+# ETH Sequential Wallet Scanner
 
 ## Overview
 
-pnpm workspace monorepo using TypeScript. Each package manages its own dependencies.
+Tool Go untuk generate dan cek saldo wallet Ethereum secara berurutan, mulai dari private key `0x000...001`.
 
 ## Stack
 
-- **Monorepo tool**: pnpm workspaces
-- **Node.js version**: 24
-- **Package manager**: pnpm
-- **TypeScript version**: 5.9
-- **API framework**: Express 5
-- **Database**: PostgreSQL + Drizzle ORM
-- **Validation**: Zod (`zod/v4`), `drizzle-zod`
-- **API codegen**: Orval (from OpenAPI spec)
-- **Build**: esbuild (CJS bundle)
+- **Bahasa**: Go 1.21
+- **Library**: `github.com/ethereum/go-ethereum/crypto`
 
-## Key Commands
+## Struktur File
 
-- `pnpm run typecheck` — full typecheck across all packages
-- `pnpm run build` — typecheck + build all packages
-- `pnpm --filter @workspace/api-spec run codegen` — regenerate API hooks and Zod schemas from OpenAPI spec
-- `pnpm --filter @workspace/db run push` — push DB schema changes (dev only)
-- `pnpm --filter @workspace/api-server run dev` — run API server locally
-
-See the `pnpm-workspace` skill for workspace structure, TypeScript setup, and package details.
-
-## ETH Wallet Scanner (Go)
-
-Located at `eth-wallet-scanner/`. A Go tool to sequentially generate and check Ethereum wallets.
-
-- **Language**: Go 1.21
-- **Binary**: `eth-wallet-scanner/eth-scanner` (pre-built)
-- **Build**: `cd eth-wallet-scanner && /nix/store/a90l6nxkqdlqxzgz5j958rz5gwygbamc-go-1.21.13/bin/go build -o eth-scanner .`
-- **Packages**: `github.com/ethereum/go-ethereum/crypto`
-
-### Key Files
-- `eth-wallet-scanner/main.go` — CLI entry point, flags, scan/generate modes
-- `eth-wallet-scanner/wallet/wallet.go` — Wallet generation from sequential index
-- `eth-wallet-scanner/checker/checker.go` — Parallel balance checker with worker pool
-
-### Usage
-```bash
-./eth-scanner -gen -start 1 -end 100          # Generate only
-./eth-scanner -start 1 -end 1000 -workers 20  # Generate + check balance
 ```
+eth-wallet-scanner/
+├── main.go              — CLI utama, flag, mode generate/scan
+├── wallet/wallet.go     — Generate wallet dari index sequential
+├── checker/checker.go   — Worker pool paralel, RPC balance check, retry
+├── run.sh               — Konfigurasi + auto-run (edit di sini untuk ubah setting)
+├── eth-scan             — Binary yang sudah dikompilasi
+├── go.mod
+└── go.sum
+```
+
+## Cara Jalankan
+
+```bash
+# Jalankan langsung (pakai konfigurasi dari run.sh)
+bash eth-wallet-scanner/run.sh
+
+# Generate wallet saja (tanpa cek saldo)
+./eth-wallet-scanner/eth-scan -gen -start 1 -end 100
+
+# Scan saldo
+./eth-wallet-scanner/eth-scan -start 1 -end 10000 -workers 5
+```
+
+## Ubah Konfigurasi
+
+Edit bagian atas file `eth-wallet-scanner/run.sh`:
+
+```bash
+START=1                        # Index awal
+END=99999999                   # Index akhir
+WORKERS=5                      # Goroutine paralel
+RATE=300                       # Jeda per worker (ms)
+RPC="https://eth.llamarpc.com" # RPC endpoint
+```
+
+## Compile Ulang
+
+```bash
+cd eth-wallet-scanner
+/nix/store/a90l6nxkqdlqxzgz5j958rz5gwygbamc-go-1.21.13/bin/go build -ldflags="-s -w" -o eth-scan .
+```
+
+## Output
+
+Wallet yang punya saldo disimpan otomatis ke `found_wallets.txt`.
