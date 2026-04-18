@@ -15,8 +15,7 @@ LAST="last_key.txt"              # File to save & resume last index
 FOUND_ONLY=false                 # Set to true to only display wallets with balance
 
 # Multiple RPCs supported — separate with comma for load balancing:
-# RPC="https://rpc1.example.com,https://rpc2.example.com"
-RPC="https://eth.llamarpc.com"
+RPC="https://eth.llamarpc.com,https://rpc.ankr.com/eth,https://cloudflare-eth.com"
 
 # =============================================
 ROOT="$(cd "$(dirname "$0")" && pwd)"

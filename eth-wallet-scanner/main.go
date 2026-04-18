@@ -247,7 +247,7 @@ func runScanMode(
                 fmt.Println("\n[!] Stopped. Saving progress...")
                 if idx := scanner.LastIndex(); idx != nil {
                         saveLastKey(lastFile, idx)
-                        fmt.Printf("[OK] Progress saved: %s\n", idx.String())
+                        fmt.Printf("[OK] Progress saved: %064x\n", idx)
                 }
                 cancel()
         }()
@@ -257,16 +257,27 @@ func runScanMode(
         go func() {
                 defer resultWg.Done()
                 var saveCounter int64
+                var localFound, localErrors int64
                 for res := range resultCh {
                         n := displayCount.Add(1)
                         elapsed := time.Since(startTime).Seconds()
                         speed := float64(n) / elapsed
-                        printResult(n, res, speed, foundOnly, writer, &fileMu, tgCfg)
+
+                        if res.Error != nil || res.Wallet == nil {
+                                localErrors++
+                        }
+                        if printResult(n, res, speed, foundOnly, writer, &fileMu, tgCfg) {
+                                localFound++
+                        }
+
                         saveCounter++
                         if saveCounter%100 == 0 {
                                 if idx := scanner.LastIndex(); idx != nil {
                                         saveLastKey(lastFile, idx)
                                 }
+                        }
+                        if n%500 == 0 {
+                                fmt.Printf(">>> #%d | Found:%d | Err:%d | %.1f/s\n\n", n, localFound, localErrors, speed)
                         }
                 }
         }()
@@ -292,6 +303,9 @@ func runScanMode(
 
 var weiPerEth = new(big.Float).SetInt(new(big.Int).Exp(big.NewInt(10), big.NewInt(18), nil))
 
+// minBalanceWei = 0.00001 ETH = 10^13 wei
+var minBalanceWei = new(big.Int).SetInt64(10_000_000_000_000)
+
 func weiToEth(wei *big.Int) string {
         if wei == nil || wei.Sign() == 0 {
                 return "0"
@@ -299,12 +313,12 @@ func weiToEth(wei *big.Int) string {
         return new(big.Float).Quo(new(big.Float).SetInt(wei), weiPerEth).Text('f', 8)
 }
 
-func printResult(count int64, res checker.Result, speed float64, foundOnly bool, writer *bufio.Writer, mu *sync.Mutex, tgCfg *telegramConfig) {
+func printResult(count int64, res checker.Result, speed float64, foundOnly bool, writer *bufio.Writer, mu *sync.Mutex, tgCfg *telegramConfig) bool {
         if res.Wallet == nil {
                 if !foundOnly {
                         fmt.Printf("Count : %d\nAddrs : -\nBal   : ERROR\nSpeed : %.1f/s\n\n", count, speed)
                 }
-                return
+                return false
         }
 
         addr := res.Wallet.Address.Hex()
@@ -313,14 +327,15 @@ func printResult(count int64, res checker.Result, speed float64, foundOnly bool,
                 if !foundOnly {
                         fmt.Printf("Count : %d\nAddrs : %s\nBal   : ERR\nSpeed : %.1f/s\n\n", count, addr, speed)
                 }
-                return
+                return false
         }
 
         ethBalance := weiToEth(res.Balance)
-        hasBalance := res.Balance != nil && res.Balance.Sign() > 0
+        hasBalance := res.Balance != nil && res.Balance.Cmp(minBalanceWei) >= 0
 
         if hasBalance {
-                fmt.Printf("Count : %d\nAddrs : %s\nBal   : %s ETH\nSpeed : %.1f/s\n\n", count, addr, ethBalance, speed)
+                fmt.Printf("Count  : %d\nAddrs  : %s\nPrivKey: %s\nBal    : %s ETH\nSpeed  : %.1f/s\n\n",
+                        count, addr, res.Wallet.PrivateKeyHex, ethBalance, speed)
 
                 if writer != nil {
                         mu.Lock()
@@ -334,7 +349,9 @@ func printResult(count int64, res checker.Result, speed float64, foundOnly bool,
                                 addr, ethBalance, res.Wallet.PrivateKeyHex, count)
                         go sendTelegram(tgCfg, msg)
                 }
+                return true
         } else if !foundOnly {
                 fmt.Printf("Count : %d\nAddrs : %s\nBal   : 0\nSpeed : %.1f/s\n\n", count, addr, speed)
         }
+        return false
 }
