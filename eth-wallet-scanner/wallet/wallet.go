@@ -10,20 +10,16 @@ import (
 	"github.com/ethereum/go-ethereum/crypto"
 )
 
-// Wallet mewakili satu wallet Ethereum
 type Wallet struct {
 	PrivateKeyHex string
 	Address       common.Address
 	Index         *big.Int
 }
 
-// maxKey adalah batas maksimum private key secp256k1 (konstan, tidak berubah)
 var maxKey, _ = new(big.Int).SetString(
 	"FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFEBAAEDCE6AF48A03BBFD25E8CD0364140", 16,
 )
 
-// keyBytesPool — sync.Pool untuk reuse buffer 32-byte saat derive private key
-// Mengurangi tekanan GC karena keyBytes dialokasi jutaan kali saat scan
 var keyBytesPool = sync.Pool{
 	New: func() interface{} {
 		b := make([]byte, 32)
@@ -31,39 +27,33 @@ var keyBytesPool = sync.Pool{
 	},
 }
 
-// FromIndex menghasilkan wallet Ethereum dari index sequential
-// Index 1 = private key 0x000...001
 func FromIndex(index *big.Int) (*Wallet, error) {
 	if index.Sign() <= 0 {
-		return nil, fmt.Errorf("index harus lebih besar dari 0")
+		return nil, fmt.Errorf("index must be greater than 0")
 	}
 	if index.Cmp(maxKey) > 0 {
-		return nil, fmt.Errorf("index melebihi batas maksimum private key secp256k1")
+		return nil, fmt.Errorf("index exceeds secp256k1 max private key")
 	}
 
-	// Ambil buffer dari pool, reset isinya ke nol
 	bPtr := keyBytesPool.Get().(*[]byte)
 	keyBytes := *bPtr
 	for i := range keyBytes {
 		keyBytes[i] = 0
 	}
 
-	// Salin bytes dari index (right-aligned dalam 32 bytes)
 	indexBytes := index.Bytes()
 	copy(keyBytes[32-len(indexBytes):], indexBytes)
 
 	privKey, err := crypto.ToECDSA(keyBytes)
-
-	// Kembalikan buffer ke pool sebelum return (tidak perlu lagi)
 	keyBytesPool.Put(bPtr)
 
 	if err != nil {
-		return nil, fmt.Errorf("gagal membuat private key: %w", err)
+		return nil, fmt.Errorf("failed to create private key: %w", err)
 	}
 
 	pubKey, ok := privKey.Public().(*ecdsa.PublicKey)
 	if !ok {
-		return nil, fmt.Errorf("gagal mendapatkan public key ECDSA")
+		return nil, fmt.Errorf("failed to get ECDSA public key")
 	}
 
 	return &Wallet{

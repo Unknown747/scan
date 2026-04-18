@@ -28,16 +28,16 @@ const banner = `
 
 func main() {
 	var (
-		startHex   = flag.String("start", "1", "Index awal (diabaikan jika last_key.txt ada)")
-		endHex     = flag.String("end", "1000", "Index akhir")
-		workers    = flag.Int("workers", runtime.NumCPU()*2, "Jumlah goroutine paralel")
-		batchSize  = flag.Int("batch", 20, "Wallet per satu batch RPC request")
+		startHex   = flag.String("start", "1", "Starting index")
+		endHex     = flag.String("end", "1000", "Ending index")
+		workers    = flag.Int("workers", runtime.NumCPU()*2, "Number of goroutines")
+		batchSize  = flag.Int("batch", 20, "Wallets per RPC batch request")
 		rpcURL     = flag.String("rpc", "https://eth.llamarpc.com", "Ethereum RPC endpoint")
-		rateMs     = flag.Int("rate", 300, "Jeda antar batch per worker (milidetik)")
-		timeoutS   = flag.Int("timeout", 15, "HTTP timeout (detik)")
-		outputFile = flag.String("output", "found_wallets.txt", "File simpan wallet bersaldo")
-		lastFile   = flag.String("last", "last_key.txt", "File simpan & resume index terakhir")
-		genOnly    = flag.Bool("gen", false, "Generate address saja tanpa cek saldo")
+		rateMs     = flag.Int("rate", 300, "Delay between batches per worker (ms)")
+		timeoutS   = flag.Int("timeout", 15, "HTTP timeout (seconds)")
+		outputFile = flag.String("output", "found_wallets.txt", "Output file for wallets with balance")
+		lastFile   = flag.String("last", "last_key.txt", "File to save & resume last index")
+		genOnly    = flag.Bool("gen", false, "Generate addresses only without checking balance")
 	)
 	flag.Parse()
 
@@ -50,43 +50,42 @@ func main() {
 		if resumed := readLastKey(*lastFile); resumed != nil {
 			next := new(big.Int).Add(resumed, big.NewInt(1))
 			if next.Cmp(startIndex) > 0 && next.Cmp(endIndex) <= 0 {
-				fmt.Printf("  [Resume]  : lanjut dari index %s (last_key.txt)\n", next.String())
+				fmt.Printf("  [Resume] : continuing from index %s\n", next.String())
 				startIndex = next
 			} else if next.Cmp(endIndex) > 0 {
-				fmt.Printf("  [Resume]  : index %s sudah melewati END (%s). Reset dari START.\n",
+				fmt.Printf("  [Resume] : index %s already past END (%s). Resetting.\n",
 					resumed.String(), endIndex.String())
 			}
 		}
 	}
 
 	if startIndex.Cmp(endIndex) > 0 {
-		fmt.Fprintln(os.Stderr, "ERROR: start harus <= end")
+		fmt.Fprintln(os.Stderr, "ERROR: start must be <= end")
 		os.Exit(1)
 	}
 
 	total := new(big.Int).Sub(endIndex, startIndex)
 	total.Add(total, big.NewInt(1))
 
-	fmt.Printf("  Start     : %s\n", startIndex.String())
-	fmt.Printf("  End       : %s\n", endIndex.String())
-	fmt.Printf("  Total     : %s wallet\n", total.String())
-	fmt.Printf("  Workers   : %d goroutines\n", *workers)
+	fmt.Printf("  Start    : %s\n", startIndex.String())
+	fmt.Printf("  End      : %s\n", endIndex.String())
+	fmt.Printf("  Total    : %s wallets\n", total.String())
+	fmt.Printf("  Workers  : %d goroutines\n", *workers)
 	if !*genOnly {
-		fmt.Printf("  Batch RPC : %d wallet/request\n", *batchSize)
-		fmt.Printf("  RPC       : %s\n", *rpcURL)
-		fmt.Printf("  Progress  : %s\n", *lastFile)
+		fmt.Printf("  Batch    : %d wallets/request\n", *batchSize)
+		fmt.Printf("  RPC      : %s\n", *rpcURL)
+		fmt.Printf("  Progress : %s\n", *lastFile)
 	}
 	fmt.Println()
 
 	ctx, cancel := context.WithCancel(context.Background())
-
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
 
 	if *genOnly {
 		go func() {
 			<-sigCh
-			fmt.Println("\n[!] Dihentikan.")
+			fmt.Println("\n[!] Stopped.")
 			cancel()
 		}()
 		runGenerateOnly(ctx, startIndex, endIndex)
@@ -126,7 +125,7 @@ func parseIndex(s, name string) *big.Int {
 	if !ok || n.Sign() <= 0 {
 		n, ok = new(big.Int).SetString(s, 10)
 		if !ok || n.Sign() <= 0 {
-			fmt.Fprintf(os.Stderr, "ERROR: %s tidak valid: %s\n", name, s)
+			fmt.Fprintf(os.Stderr, "ERROR: invalid %s: %s\n", name, s)
 			os.Exit(1)
 		}
 	}
@@ -134,8 +133,7 @@ func parseIndex(s, name string) *big.Int {
 }
 
 func runGenerateOnly(ctx context.Context, startIndex, endIndex *big.Int) {
-	fmt.Println("─────────────────────────────────────────────────────────────────────────────────────────")
-
+	fmt.Println("─────────────────────────────────────────────────────────────────────")
 	one := big.NewInt(1)
 	current := new(big.Int).Set(startIndex)
 	var count int64 = 1
@@ -146,21 +144,19 @@ func runGenerateOnly(ctx context.Context, startIndex, endIndex *big.Int) {
 			goto done
 		default:
 		}
-
 		w, err := wallet.FromIndex(current)
 		if err == nil {
 			fmt.Printf("Count : %-10d  Addrs : %s  Bal : 0\n", count, w.Address.Hex())
 		} else {
 			fmt.Printf("Count : %-10d  ERROR: %v\n", count, err)
 		}
-
 		current.Add(current, one)
 		count++
 	}
 
 done:
-	fmt.Println("─────────────────────────────────────────────────────────────────────────────────────────")
-	fmt.Printf("\n[✓] Selesai. Total: %d wallet\n", count-1)
+	fmt.Println("─────────────────────────────────────────────────────────────────────")
+	fmt.Printf("\n[✓] Done. Total: %d wallets\n", count-1)
 }
 
 func runScanMode(
@@ -188,7 +184,7 @@ func runScanMode(
 	var fileMu sync.Mutex
 
 	if f, err := os.OpenFile(outputFile, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0644); err != nil {
-		fmt.Fprintf(os.Stderr, "WARNING: Tidak bisa buka file output: %v\n", err)
+		fmt.Fprintf(os.Stderr, "WARNING: cannot open output file: %v\n", err)
 	} else {
 		outFile = f
 		defer outFile.Close()
@@ -196,23 +192,23 @@ func runScanMode(
 		defer writer.Flush()
 		if stat, _ := outFile.Stat(); stat.Size() == 0 {
 			fmt.Fprintf(writer, "# ETH Wallet Scanner — Found Wallets\n")
-			fmt.Fprintf(writer, "# Tanggal: %s\n", time.Now().Format("2006-01-02 15:04:05"))
+			fmt.Fprintf(writer, "# Date: %s\n", time.Now().Format("2006-01-02 15:04:05"))
 			fmt.Fprintf(writer, "# Format: COUNT | PRIVATE_KEY | ADDRESS | BALANCE_ETH\n\n")
 		}
 	}
 
 	resultCh := make(chan checker.Result, workers*batchSize*2)
 
-	fmt.Println("─────────────────────────────────────────────────────────────────────────────────────────")
+	fmt.Println("─────────────────────────────────────────────────────────────────────")
 	startTime := time.Now()
 	var displayCount atomic.Int64
 
 	go func() {
 		<-sigCh
-		fmt.Println("\n[!] Dihentikan. Menyimpan progress...")
+		fmt.Println("\n[!] Stopped. Saving progress...")
 		if idx := scanner.LastIndex(); idx != nil {
 			saveLastKey(lastFile, idx)
-			fmt.Printf("[✓] Progress tersimpan di %s (index: %s)\n", lastFile, idx.String())
+			fmt.Printf("[✓] Progress saved to %s (index: %s)\n", lastFile, idx.String())
 		}
 		cancel()
 	}()
@@ -224,10 +220,8 @@ func runScanMode(
 		var saveCounter int64
 		for res := range resultCh {
 			n := displayCount.Add(1)
-			elapsed := time.Since(startTime).Seconds()
-			speed := float64(n) / elapsed
+			speed := float64(n) / time.Since(startTime).Seconds()
 			printResult(n, res, speed, writer, &fileMu)
-
 			saveCounter++
 			if saveCounter%100 == 0 {
 				if idx := scanner.LastIndex(); idx != nil {
@@ -249,17 +243,17 @@ func runScanMode(
 	elapsed := time.Since(startTime)
 	checked, withFunds, errs := scanner.Stats()
 
-	fmt.Println("─────────────────────────────────────────────────────────────────────────────────────────")
-	fmt.Printf("\n  Total Dicek  : %d\n", checked)
-	fmt.Printf("  Ada Saldo    : %d wallet\n", withFunds)
-	fmt.Printf("  Error        : %d\n", errs)
-	fmt.Printf("  Durasi       : %s\n", elapsed.Round(time.Millisecond))
-	fmt.Printf("  Kecepatan    : %.1f wallet/detik\n", float64(checked)/elapsed.Seconds())
+	fmt.Println("─────────────────────────────────────────────────────────────────────")
+	fmt.Printf("\n  Checked  : %d wallets\n", checked)
+	fmt.Printf("  Found    : %d wallets with balance\n", withFunds)
+	fmt.Printf("  Errors   : %d\n", errs)
+	fmt.Printf("  Duration : %s\n", elapsed.Round(time.Millisecond))
+	fmt.Printf("  Speed    : %.1f wallets/s\n", float64(checked)/elapsed.Seconds())
 	if outFile != nil && withFunds > 0 {
-		fmt.Printf("  Tersimpan di : %s\n", outputFile)
+		fmt.Printf("  Saved to : %s\n", outputFile)
 	}
 	if idx := scanner.LastIndex(); idx != nil {
-		fmt.Printf("  Last Key     : %s → %s\n", lastFile, idx.String())
+		fmt.Printf("  Last Key : %s → %s\n", lastFile, idx.String())
 	}
 }
 
@@ -269,8 +263,7 @@ func weiToEth(wei *big.Int) string {
 	if wei == nil || wei.Sign() == 0 {
 		return "0"
 	}
-	eth := new(big.Float).Quo(new(big.Float).SetInt(wei), weiPerEth)
-	return eth.Text('f', 8)
+	return new(big.Float).Quo(new(big.Float).SetInt(wei), weiPerEth).Text('f', 8)
 }
 
 func printResult(count int64, res checker.Result, speed float64, writer *bufio.Writer, mu *sync.Mutex) {
@@ -297,8 +290,7 @@ func printResult(count int64, res checker.Result, speed float64, writer *bufio.W
 
 	if hasBalance && writer != nil {
 		mu.Lock()
-		fmt.Fprintf(writer, "%d | %s | %s | %s ETH\n",
-			count, res.Wallet.PrivateKeyHex, addr, ethBalance)
+		fmt.Fprintf(writer, "%d | %s | %s | %s ETH\n", count, res.Wallet.PrivateKeyHex, addr, ethBalance)
 		writer.Flush()
 		mu.Unlock()
 	}
