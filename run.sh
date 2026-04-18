@@ -6,16 +6,25 @@
 
 START=1                          # Starting index (ignored if last_key.txt exists)
 END=99999999                     # Ending index
-WORKERS=5                        # Parallel goroutines
+WORKERS=6                        # Parallel goroutines
 BATCH=20                         # Wallets per RPC batch request
-RATE=300                         # Delay between batches per worker (ms)
+RATE=200                         # Delay between batches per worker (ms)
 TIMEOUT=15                       # HTTP timeout (seconds)
 OUTPUT="found_wallets.txt"       # Output file for wallets with balance
 LAST="last_key.txt"              # File to save & resume last index
 FOUND_ONLY=false                 # Set to true to only display wallets with balance
 
-# Multiple RPCs supported — separate with comma for load balancing:
-RPC="https://eth.llamarpc.com,https://rpc.ankr.com/eth,https://cloudflare-eth.com"
+# Multiple RPCs — auto-skip jika error berulang, kembali otomatis setelah 30 detik:
+RPC="https://eth.llamarpc.com,\
+https://rpc.ankr.com/eth,\
+https://cloudflare-eth.com,\
+https://ethereum.publicnode.com,\
+https://eth.drpc.org,\
+https://1rpc.io/eth,\
+https://rpc.payload.de,\
+https://api.zan.top/node/v1/eth/mainnet/public,\
+https://eth-mainnet.public.blastapi.io,\
+https://endpoints.omniatech.io/v1/eth/mainnet/public"
 
 # =============================================
 ROOT="$(cd "$(dirname "$0")" && pwd)"

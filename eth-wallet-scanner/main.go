@@ -244,11 +244,24 @@ func runScanMode(
 
         go func() {
                 <-sigCh
+                elapsed := time.Since(startTime)
+                n := displayCount.Load()
                 fmt.Println("\n[!] Stopped. Saving progress...")
                 if idx := scanner.LastIndex(); idx != nil {
                         saveLastKey(lastFile, idx)
                         fmt.Printf("[OK] Progress saved: %064x\n", idx)
                 }
+                checked, withFunds, errs := scanner.Stats()
+                errPct := 0.0
+                if n > 0 {
+                        errPct = float64(errs) / float64(n) * 100
+                }
+                spd := 0.0
+                if s := elapsed.Seconds(); s > 0 {
+                        spd = float64(checked) / s
+                }
+                fmt.Printf("[Stats] Checked:%-6d | Found:%-4d | Err:%d (%.0f%%) | Duration:%s | Speed:%.1f/s\n",
+                        checked, withFunds, errs, errPct, elapsed.Round(time.Second), spd)
                 cancel()
         }()
 
@@ -277,7 +290,11 @@ func runScanMode(
                                 }
                         }
                         if n%500 == 0 {
-                                fmt.Printf(">>> #%d | Found:%d | Err:%d | %.1f/s\n\n", n, localFound, localErrors, speed)
+                                errPct := 0.0
+                                if n > 0 {
+                                        errPct = float64(localErrors) / float64(n) * 100
+                                }
+                                fmt.Printf(">>> #%d | Found:%d | Err:%d (%.0f%%) | %.1f/s\n\n", n, localFound, localErrors, errPct, speed)
                         }
                 }
         }()
@@ -293,9 +310,16 @@ func runScanMode(
 
         elapsed := time.Since(startTime)
         checked, withFunds, errs := scanner.Stats()
-
-        fmt.Printf("[Done] Checked:%d  Found:%d  Errors:%d  Duration:%s  Speed:%.1f/s\n",
-                checked, withFunds, errs, elapsed.Round(time.Millisecond), float64(checked)/elapsed.Seconds())
+        errPct := 0.0
+        if checked+errs > 0 {
+                errPct = float64(errs) / float64(checked+errs) * 100
+        }
+        spd := 0.0
+        if s := elapsed.Seconds(); s > 0 {
+                spd = float64(checked) / s
+        }
+        fmt.Printf("[Done] Checked:%-6d | Found:%-4d | Err:%d (%.0f%%) | Duration:%s | Speed:%.1f/s\n",
+                checked, withFunds, errs, errPct, elapsed.Round(time.Second), spd)
         if outFile != nil && withFunds > 0 {
                 fmt.Printf("[Saved] %s\n", outputFile)
         }
