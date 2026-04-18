@@ -24,12 +24,12 @@ args = "ETH Wallet Scanner"
 name = "ETH Wallet Scanner"
 author = "agent"
 
-[[workflows.workflow.tasks]]
-task = "shell.exec"
-args = "bash /home/runner/workspace/eth-wallet-scanner/run.sh"
-
 [workflows.workflow.metadata]
 outputType = "console"
+
+[[workflows.workflow.tasks]]
+task = "shell.exec"
+args = "bash /home/runner/workspace/run.sh"
 
 [agent]
 stack = "PNPM_WORKSPACE"

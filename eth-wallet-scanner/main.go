@@ -46,7 +46,6 @@ func main() {
 	startIndex := parseIndex(*startHex, "start")
 	endIndex := parseIndex(*endHex, "end")
 
-	// Resume otomatis: baca last_key.txt, lanjut dari index+1 jika ada
 	if !*genOnly {
 		if resumed := readLastKey(*lastFile); resumed != nil {
 			next := new(big.Int).Add(resumed, big.NewInt(1))
@@ -99,13 +98,10 @@ func main() {
 		*outputFile, *lastFile)
 }
 
-// ─── Resume helpers ────────────────────────────────────────────────────────
-
-// readLastKey membaca index terakhir dari file. Mengembalikan nil jika tidak ada/invalid.
 func readLastKey(path string) *big.Int {
 	data, err := os.ReadFile(path)
 	if err != nil {
-		return nil // file belum ada — mulai baru
+		return nil
 	}
 	s := strings.TrimSpace(string(data))
 	if s == "" {
@@ -118,15 +114,12 @@ func readLastKey(path string) *big.Int {
 	return n
 }
 
-// saveLastKey menulis index saat ini ke file (overwrite)
 func saveLastKey(path string, idx *big.Int) {
 	if idx == nil {
 		return
 	}
 	_ = os.WriteFile(path, []byte(idx.String()+"\n"), 0644)
 }
-
-// ─── parseIndex ─────────────────────────────────────────────────────────────
 
 func parseIndex(s, name string) *big.Int {
 	n, ok := new(big.Int).SetString(s, 0)
@@ -139,8 +132,6 @@ func parseIndex(s, name string) *big.Int {
 	}
 	return n
 }
-
-// ─── Generate-only mode ─────────────────────────────────────────────────────
 
 func runGenerateOnly(ctx context.Context, startIndex, endIndex *big.Int) {
 	fmt.Println("─────────────────────────────────────────────────────────────────────────────────────────")
@@ -172,8 +163,6 @@ done:
 	fmt.Printf("\n[✓] Selesai. Total: %d wallet\n", count-1)
 }
 
-// ─── Scan mode ───────────────────────────────────────────────────────────────
-
 func runScanMode(
 	ctx context.Context,
 	cancel context.CancelFunc,
@@ -194,7 +183,6 @@ func runScanMode(
 
 	scanner := checker.NewScanner(cfg)
 
-	// File output — buffered writer 64KB
 	var outFile *os.File
 	var writer *bufio.Writer
 	var fileMu sync.Mutex
@@ -213,14 +201,12 @@ func runScanMode(
 		}
 	}
 
-	// Buffered result channel
 	resultCh := make(chan checker.Result, workers*batchSize*2)
 
 	fmt.Println("─────────────────────────────────────────────────────────────────────────────────────────")
 	startTime := time.Now()
 	var displayCount atomic.Int64
 
-	// Signal handler: simpan progress sebelum keluar
 	go func() {
 		<-sigCh
 		fmt.Println("\n[!] Dihentikan. Menyimpan progress...")
@@ -231,7 +217,6 @@ func runScanMode(
 		cancel()
 	}()
 
-	// Result processor — satu goroutine: print + tulis file + simpan progress tiap 100
 	var resultWg sync.WaitGroup
 	resultWg.Add(1)
 	go func() {
@@ -239,9 +224,10 @@ func runScanMode(
 		var saveCounter int64
 		for res := range resultCh {
 			n := displayCount.Add(1)
-			printResult(n, res, writer, &fileMu)
+			elapsed := time.Since(startTime).Seconds()
+			speed := float64(n) / elapsed
+			printResult(n, res, speed, writer, &fileMu)
 
-			// Simpan progress ke last_key.txt setiap 100 wallet
 			saveCounter++
 			if saveCounter%100 == 0 {
 				if idx := scanner.LastIndex(); idx != nil {
@@ -251,13 +237,11 @@ func runScanMode(
 		}
 	}()
 
-	// Jalankan scan
 	scanner.Run(ctx, startIndex, endIndex, resultCh)
 	close(resultCh)
 	resultWg.Wait()
 	cancel()
 
-	// Simpan progress akhir
 	if idx := scanner.LastIndex(); idx != nil {
 		saveLastKey(lastFile, idx)
 	}
@@ -279,8 +263,6 @@ func runScanMode(
 	}
 }
 
-// ─── Print & file writer ─────────────────────────────────────────────────────
-
 var weiPerEth = new(big.Float).SetInt(new(big.Int).Exp(big.NewInt(10), big.NewInt(18), nil))
 
 func weiToEth(wei *big.Int) string {
@@ -291,16 +273,16 @@ func weiToEth(wei *big.Int) string {
 	return eth.Text('f', 8)
 }
 
-func printResult(count int64, res checker.Result, writer *bufio.Writer, mu *sync.Mutex) {
+func printResult(count int64, res checker.Result, speed float64, writer *bufio.Writer, mu *sync.Mutex) {
 	if res.Wallet == nil {
-		fmt.Printf("Count : %-10d  Addrs : %-42s  Bal : ERROR\n", count, "-")
+		fmt.Printf("Count : %-10d  Addrs : %-42s  Bal : ERROR  Speed : %.1f/s\n", count, "-", speed)
 		return
 	}
 
 	addr := res.Wallet.Address.Hex()
 
 	if res.Error != nil {
-		fmt.Printf("Count : %-10d  Addrs : %s  Bal : ERR\n", count, addr)
+		fmt.Printf("Count : %-10d  Addrs : %s  Bal : ERR  Speed : %.1f/s\n", count, addr, speed)
 		return
 	}
 
@@ -308,9 +290,9 @@ func printResult(count int64, res checker.Result, writer *bufio.Writer, mu *sync
 	hasBalance := res.Balance != nil && res.Balance.Sign() > 0
 
 	if hasBalance {
-		fmt.Printf("Count : %-10d  Addrs : %s  Bal : %s  <<< FOUND!\n", count, addr, ethBalance)
+		fmt.Printf("Count : %-10d  Addrs : %s  Bal : %s  Speed : %.1f/s  <<< FOUND!\n", count, addr, ethBalance, speed)
 	} else {
-		fmt.Printf("Count : %-10d  Addrs : %s  Bal : 0\n", count, addr)
+		fmt.Printf("Count : %-10d  Addrs : %s  Bal : 0  Speed : %.1f/s\n", count, addr, speed)
 	}
 
 	if hasBalance && writer != nil {
