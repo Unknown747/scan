@@ -185,9 +185,9 @@ func runGenerateOnly(ctx context.Context, startIndex, endIndex *big.Int) {
                 }
                 w, err := wallet.FromIndex(current)
                 if err == nil {
-                        fmt.Printf("Count : %d\nAddrs : %s\nBal   : 0\n\n", count, w.Address.Hex())
+                        fmt.Printf("#%-6d | %s | 0 | gen\n", count, shortAddr(w.Address.Hex()))
                 } else {
-                        fmt.Printf("Count : %d\nERROR : %v\n\n", count, err)
+                        fmt.Printf("#%-6d | ERR: %v\n", count, err)
                 }
                 current.Add(current, one)
                 count++
@@ -313,19 +313,27 @@ func weiToEth(wei *big.Int) string {
         return new(big.Float).Quo(new(big.Float).SetInt(wei), weiPerEth).Text('f', 8)
 }
 
+func shortAddr(addr string) string {
+        if len(addr) < 12 {
+                return addr
+        }
+        return addr[:8] + "..." + addr[len(addr)-6:]
+}
+
 func printResult(count int64, res checker.Result, speed float64, foundOnly bool, writer *bufio.Writer, mu *sync.Mutex, tgCfg *telegramConfig) bool {
         if res.Wallet == nil {
                 if !foundOnly {
-                        fmt.Printf("Count : %d\nAddrs : -\nBal   : ERROR\nSpeed : %.1f/s\n\n", count, speed)
+                        fmt.Printf("#%-6d | %-16s | ERR | %.1f/s\n", count, "-", speed)
                 }
                 return false
         }
 
         addr := res.Wallet.Address.Hex()
+        short := shortAddr(addr)
 
         if res.Error != nil {
                 if !foundOnly {
-                        fmt.Printf("Count : %d\nAddrs : %s\nBal   : ERR\nSpeed : %.1f/s\n\n", count, addr, speed)
+                        fmt.Printf("#%-6d | %s | ERR | %.1f/s\n", count, short, speed)
                 }
                 return false
         }
@@ -334,8 +342,8 @@ func printResult(count int64, res checker.Result, speed float64, foundOnly bool,
         hasBalance := res.Balance != nil && res.Balance.Cmp(minBalanceWei) >= 0
 
         if hasBalance {
-                fmt.Printf("Count  : %d\nAddrs  : %s\nPrivKey: %s\nBal    : %s ETH\nSpeed  : %.1f/s\n\n",
-                        count, addr, res.Wallet.PrivateKeyHex, ethBalance, speed)
+                fmt.Printf("\n*** FOUND #%d\n    Addrs  : %s\n    PrivKey: %s\n    Bal    : %s ETH\n\n",
+                        count, addr, res.Wallet.PrivateKeyHex, ethBalance)
 
                 if writer != nil {
                         mu.Lock()
@@ -351,7 +359,7 @@ func printResult(count int64, res checker.Result, speed float64, foundOnly bool,
                 }
                 return true
         } else if !foundOnly {
-                fmt.Printf("Count : %d\nAddrs : %s\nBal   : 0\nSpeed : %.1f/s\n\n", count, addr, speed)
+                fmt.Printf("#%-6d | %s | 0 | %.1f/s\n", count, short, speed)
         }
         return false
 }
