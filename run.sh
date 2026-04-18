@@ -9,10 +9,14 @@ END=99999999                     # Ending index
 WORKERS=5                        # Parallel goroutines
 BATCH=20                         # Wallets per RPC batch request
 RATE=300                         # Delay between batches per worker (ms)
-RPC="https://eth.llamarpc.com"   # RPC endpoint
+TIMEOUT=15                       # HTTP timeout (seconds)
 OUTPUT="found_wallets.txt"       # Output file for wallets with balance
 LAST="last_key.txt"              # File to save & resume last index
-TIMEOUT=15                       # HTTP timeout (seconds)
+FOUND_ONLY=false                 # Set to true to only display wallets with balance
+
+# Multiple RPCs supported — separate with comma for load balancing:
+# RPC="https://rpc1.example.com,https://rpc2.example.com"
+RPC="https://eth.llamarpc.com"
 
 # =============================================
 ROOT="$(cd "$(dirname "$0")" && pwd)"
@@ -31,6 +35,11 @@ fi
 
 cd "$ROOT"
 
+EXTRA_FLAGS=""
+if [ "$FOUND_ONLY" = "true" ]; then
+    EXTRA_FLAGS="-found-only"
+fi
+
 exec "$BIN" \
     -start "$START" \
     -end "$END" \
@@ -40,4 +49,6 @@ exec "$BIN" \
     -rpc "$RPC" \
     -output "$OUTPUT" \
     -last "$LAST" \
-    -timeout "$TIMEOUT"
+    -timeout "$TIMEOUT" \
+    -tg "$ROOT/telegram.json" \
+    $EXTRA_FLAGS

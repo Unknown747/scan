@@ -21,7 +21,7 @@ type Result struct {
 }
 
 type Config struct {
-	RPCURL     string
+	RPCURLs    []string
 	Workers    int
 	BatchSize  int
 	RateLimit  time.Duration
@@ -105,9 +105,10 @@ func getSingleBalance(ctx context.Context, client *http.Client, rpcURL, addr str
 	return parseHexBalance(r.Result), nil
 }
 
-func getSingleBalanceWithRetry(ctx context.Context, client *http.Client, rpcURL, addr string, maxRetries int) (*big.Int, error) {
+func getSingleBalanceWithRetry(ctx context.Context, client *http.Client, rpcURLs []string, addr string, maxRetries int, rpcIdx *atomic.Uint64) (*big.Int, error) {
 	var lastErr error
 	backoff := 300 * time.Millisecond
+	n := uint64(len(rpcURLs))
 	for attempt := 0; attempt <= maxRetries; attempt++ {
 		if attempt > 0 {
 			select {
@@ -117,7 +118,8 @@ func getSingleBalanceWithRetry(ctx context.Context, client *http.Client, rpcURL,
 			}
 			backoff *= 2
 		}
-		if bal, err := getSingleBalance(ctx, client, rpcURL, addr); err == nil {
+		rpc := rpcURLs[rpcIdx.Add(1)%n]
+		if bal, err := getSingleBalance(ctx, client, rpc, addr); err == nil {
 			return bal, nil
 		} else {
 			lastErr = err
@@ -187,11 +189,12 @@ func batchGetBalance(ctx context.Context, client *http.Client, rpcURL string, wa
 	return results, nil
 }
 
-func checkBatchWithFallback(ctx context.Context, client *http.Client, rpcURL string, wallets []*wallet.Wallet, maxRetries int) []*big.Int {
+func checkBatchWithFallback(ctx context.Context, client *http.Client, rpcURLs []string, wallets []*wallet.Wallet, maxRetries int, rpcIdx *atomic.Uint64) []*big.Int {
 	n := len(wallets)
 	results := make([]*big.Int, n)
 
-	if batchResults, err := batchGetBalance(ctx, client, rpcURL, wallets); err == nil {
+	rpc := rpcURLs[rpcIdx.Load()%uint64(len(rpcURLs))]
+	if batchResults, err := batchGetBalance(ctx, client, rpc, wallets); err == nil {
 		for i, bal := range batchResults {
 			results[i] = bal
 		}
@@ -211,7 +214,7 @@ func checkBatchWithFallback(ctx context.Context, client *http.Client, rpcURL str
 			return results
 		default:
 		}
-		bal, err := getSingleBalanceWithRetry(ctx, client, rpcURL, w.Address.Hex(), maxRetries)
+		bal, err := getSingleBalanceWithRetry(ctx, client, rpcURLs, w.Address.Hex(), maxRetries, rpcIdx)
 		if err == nil {
 			results[i] = bal
 		}
@@ -225,6 +228,7 @@ type Scanner struct {
 	checked   atomic.Int64
 	withFunds atomic.Int64
 	errors    atomic.Int64
+	rpcIdx    atomic.Uint64
 	lastIdxMu sync.Mutex
 	lastIdx   *big.Int
 }
@@ -252,6 +256,9 @@ func NewScanner(cfg Config) *Scanner {
 	}
 	if cfg.BatchSize <= 0 {
 		cfg.BatchSize = 20
+	}
+	if len(cfg.RPCURLs) == 0 {
+		cfg.RPCURLs = []string{"https://eth.llamarpc.com"}
 	}
 	return &Scanner{
 		config: cfg,
@@ -361,7 +368,7 @@ func (s *Scanner) worker(ctx context.Context, batchCh <-chan []*big.Int, resultC
 				continue
 			}
 
-			balances := checkBatchWithFallback(ctx, s.client, s.config.RPCURL, wallets, s.config.MaxRetries)
+			balances := checkBatchWithFallback(ctx, s.client, s.config.RPCURLs, wallets, s.config.MaxRetries, &s.rpcIdx)
 			s.checked.Add(int64(len(wallets)))
 
 			for i, w := range wallets {
