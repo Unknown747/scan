@@ -93,10 +93,10 @@ func main() {
                 if resumed := readLastKey(*lastFile); resumed != nil {
                         next := new(big.Int).Add(resumed, big.NewInt(1))
                         if next.Cmp(startIndex) > 0 && next.Cmp(endIndex) <= 0 {
-                                fmt.Printf("[Resume] index %s\n\n", next.String())
+                                fmt.Printf("[Resume] %064x\n\n", next)
                                 startIndex = next
                         } else if next.Cmp(endIndex) > 0 {
-                                fmt.Printf("[Resume] index %s already past END. Resetting.\n\n", resumed.String())
+                                fmt.Printf("[Resume] %064x already past END. Resetting.\n\n", resumed)
                         }
                 }
         }
@@ -134,7 +134,18 @@ func readLastKey(path string) *big.Int {
         if s == "" {
                 return nil
         }
-        n, ok := new(big.Int).SetString(s, 10)
+        // Strip optional 0x prefix
+        s = strings.TrimPrefix(s, "0x")
+        s = strings.TrimPrefix(s, "0X")
+        var n *big.Int
+        var ok bool
+        if len(s) == 64 {
+                // New format: 64-char hex private key
+                n, ok = new(big.Int).SetString(s, 16)
+        } else {
+                // Legacy format: plain decimal number
+                n, ok = new(big.Int).SetString(s, 10)
+        }
         if !ok || n.Sign() <= 0 {
                 return nil
         }
@@ -145,7 +156,8 @@ func saveLastKey(path string, idx *big.Int) {
         if idx == nil {
                 return
         }
-        _ = os.WriteFile(path, []byte(idx.String()+"\n"), 0644)
+        // Save as full 64-character hex private key
+        _ = os.WriteFile(path, []byte(fmt.Sprintf("%064x\n", idx)), 0644)
 }
 
 func parseIndex(s, name string) *big.Int {
